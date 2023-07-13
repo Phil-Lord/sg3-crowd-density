@@ -408,6 +408,34 @@ def calculate_avg_bb_dimensions(bbs):
     return avg_bb_width, avg_bb_height
 
 
+def plot_density_map(num_clusters, crowded_regions, cell_size):
+    ''' Plot density map for grid calculation method. '''
+
+    # Generate a color map for the clusters
+    cluster_colors = plt.cm.get_cmap('rainbow', num_clusters + 1)
+
+    # Plot map with clusters on the grid
+    plt.figure(figsize=(8, 6))
+
+    # Plot each cluster with a different color
+    for cluster_label in range(1, num_clusters + 1):
+        cluster_mask = crowded_regions == cluster_label
+        plt.scatter(
+            np.nonzero(cluster_mask)[1] * cell_size + cell_size / 2,
+            np.nonzero(cluster_mask)[0] * cell_size + cell_size / 2,
+            color=cluster_colors(cluster_label),
+            marker='o',
+            edgecolors='black',
+            s=50,
+        )
+
+    plt.colorbar(label='Density')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('BB Density Map with Clusters')
+    plt.show()
+
+
 def threshold_density(person_count):
     ''' Return the density label using manual thresholding based on person count. '''
 
@@ -477,7 +505,7 @@ def euclidean_density(bbs):
     return label
 
 
-def grid_density(bbs, img_w, img_h):
+def grid_density(bbs, img_w, img_h, plot):
     ''' Return the density of bbs in a crowd image using adaptive cell size grid clustering. '''
 
     # Calculate average bb size
@@ -527,6 +555,9 @@ def grid_density(bbs, img_w, img_h):
     for cluster_label, cluster_density in enumerate(cluster_densities):
         print(f"Cluster {cluster_label + 1} Density: {cluster_density}")
     
+    if plot:
+        plot_density_map(num_clusters, crowded_regions, cell_size)
+
     # Find densest cluster
     density = np.max(cluster_densities)
 
@@ -673,7 +704,7 @@ def kde_density(bbs, img_w, img_h):
     return label
 
 
-def generate_ch_labels(source, method):
+def generate_ch_labels(source, method, plot):
     ''' Create a dataset.json file in source with crowd density labels using CrowdHuman annotations.odgt. '''
 
     # Read CrowdHuman annotations
@@ -706,7 +737,7 @@ def generate_ch_labels(source, method):
         elif method == 'euclidean':
             density_label = euclidean_density(bbs)
         elif method == 'grid':
-            density_label = grid_density(bbs, img_w, img_h)
+            density_label = grid_density(bbs, img_w, img_h, plot)
         elif method == 'grid-metres':
             density_label = grid_density_metres(bbs, img_w, img_h)
         elif method == 'kde':
@@ -729,6 +760,7 @@ def generate_ch_labels(source, method):
 @click.option('--transform', help='Input crop/resize mode', type=click.Choice(['center-crop', 'center-crop-wide']))
 @click.option('--resolution', help='Output resolution (e.g., \'512x512\')', metavar='WxH', type=parse_tuple)
 @click.option('--density', help='Prepare dataset.json for CrowdHuman dataset', type=click.Choice(['threshold', 'normalised', 'euclidean', 'grid', 'grid-metres', 'kde']))
+@click.option('--plot', help='Plot density map when using grid method', type=bool, default=False)
 def convert_dataset(
     ctx: click.Context,
     source: str,
@@ -736,7 +768,8 @@ def convert_dataset(
     max_images: Optional[int],
     transform: Optional[str],
     resolution: Optional[Tuple[int, int]],
-    density: Optional[str]
+    density: Optional[str],
+    plot: Optional[bool]
 ):
     """Convert an image dataset into a dataset archive usable with StyleGAN2 ADA PyTorch.
 
@@ -808,7 +841,7 @@ def convert_dataset(
 
     # Create dataset.json labels file if dataset is CrowdHuman
     if density is not None:
-        generate_ch_labels(source, density)
+        generate_ch_labels(source, density, plot)
         
     num_files, input_iter = open_dataset(source, max_images=max_images)
     archive_root_dir, save_bytes, close_dest = open_dest(dest)
