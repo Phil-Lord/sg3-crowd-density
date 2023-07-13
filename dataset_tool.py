@@ -75,362 +75,6 @@ def is_image_ext(fname: Union[str, Path]) -> bool:
 
 #----------------------------------------------------------------------------
 
-# Implement YOLO social distancing calculations
-# They calculate to find if 2 people are too close
-# Calculate the amount of instances of people being too close
-# Too close can be calculated using image size and bb sizes
-# If instances of people being close is > 75% amount of people, its crowded
-# Crowdedness also depends on total people, as 5 isn't crowded
-
-def get_bbs(annotation):
-    bbs = []
-
-    # Extract bounding boxes from annotation file line
-    ann_json = json.loads(annotation)
-
-    for gtbox in ann_json['gtboxes']:
-        # Get full bb [x, y, w, h] (includes non-visible parts of people)
-        xywh = gtbox['fbox']
-        
-        # Calculate bb [x, y, x, y]
-        xyxy = xywh
-        xyxy[2] = xywh[0] + xywh[2] # botton right x
-        xyxy[3] = xywh[1] + xywh[3] # bottom right y
-        
-        bbs.append(xyxy)
-
-    return bbs
-
-
-def get_centroids(bbs):
-    centroids = []
-
-    for bb in bbs:
-        centroids.append(((int(bb[2])+int(bb[0]))//2,(int(bb[3])+int(bb[1]))//2))
-
-    return centroids
-
-
-def get_distances(bbs):
-    # https://github.com/ChargedMonk/Social-Distancing-using-YOLOv5/blob/b4694503d490797592f50a52aa7a7f7448c6bf58/utils/utils.py#L929
-    # Calculate distances between every combination of 2 people
-    bb_combos = list(itertools.combinations(bbs,2))
-    distances = []
-
-    for combo in bb_combos:
-        # Calculate centroids 
-        bb1, bb2 = combo[0], combo[1]
-        centroid1 = ((int(bb1[2])+int(bb1[0]))//2,(int(bb1[3])+int(bb1[1]))//2)
-        centroid2 = ((int(bb2[2])+int(bb2[0]))//2,(int(bb2[3])+int(bb2[1]))//2)
-
-        # Calculate distance between centroids
-        distance = ((centroid2[0]-centroid1[0])**2 + (centroid2[1]-centroid1[1])**2)**0.5
-        distances.append(distance)
-
-    # Calculate amount of times distance is "close"
-
-    # Calculate density based on "close" instances and total person count
-
-    return distances
-
-
-def kde_density(centroids, img_w, img_h):
-    bandwidth = 0.5
-    step_size = 0.1
-
-    # Convert centroids to np array
-    centroids = np.array(centroids)
-
-    # Create KDE instance
-    kde = KernelDensity(bandwidth=bandwidth, kernel='gaussian')
-
-    # Fit KDE model to data
-    kde.fit(centroids)
-
-    # Generate grid of points covering entire image to evaluate density
-    x, y = np.meshgrid(np.arange(0, img_w, step_size),
-                       np.arange(0, img_h, step_size))
-    xy = np.vstack([x.ravel(), y.ravel()]).T
-
-    # Calculate density values for the grid points
-    density_values = np.exp(kde.score_samples(xy))
-
-    # Reshape density values to match shape of grid
-    density_map = density_values.reshape(x.shape)
-
-    return density_map
-
-
-def calculate_avg_bb_size_percentage(bbs, img_w, img_h):
-    # Calculate average bb size as a percentage of the image size
-    total_area = img_w * img_h
-    total_bb_area = sum([(x_max - x_min) * (y_max - y_min) for x_min, y_min, x_max, y_max in bbs])
-    avg_bb_area = total_bb_area / len(bbs)
-    percentage_of_image = (avg_bb_area / total_area)
-    return percentage_of_image
-
-
-def calculate_avg_bb_size(bbs, img_w, img_h):
-    total_bb_area = 0
-    for bb in bbs:
-        x_min, y_min, x_max, y_max = bb
-        bb_width = x_max - x_min
-        bb_height = y_max - y_min
-        total_bb_area += bb_width * bb_height
-
-    total_image_area = img_w * img_h
-    avg_bb_area = total_bb_area / len(bbs)
-    avg_bb_size = np.sqrt(avg_bb_area / total_image_area)
-
-    return avg_bb_size
-
-
-def calculate_avg_bb_height(bbs):
-    total_height = 0
-    num_bbs = len(bbs)
-
-    for bb in bbs:
-        x_min, y_min, x_max, y_max = bb
-        bb_height = y_max - y_min
-        total_height += bb_height
-
-    avg_bb_height = total_height / num_bbs
-    return avg_bb_height
-
-
-def grid_density(bbs, img_w, img_h):
-    # Calculate average bb size
-    avg_bb_size = calculate_avg_bb_size(bbs, img_w, img_h)
-    
-    # Determine desired cell size based on average bb size (adaptive cell size)
-    desired_num_cells = 25
-    cell_x = img_w / desired_num_cells
-    cell_y = img_h / desired_num_cells
-    cell_size = max(cell_x, cell_y, avg_bb_size * 168.5)
-
-    # Calculate no. cells based on image size
-    num_cells_x = int(img_w / cell_size)
-    num_cells_y = int(img_h / cell_size)
-    
-    # Create grid using cell size and no.
-    grid = np.zeros((num_cells_y, num_cells_x))
-
-    # Count no. bbs in each cell
-    for bb in bbs:
-        x_min, y_min, x_max, y_max = bb
-        cell_x_min = int(x_min / cell_size)
-        cell_y_min = int(y_min / cell_size)
-        cell_x_max = int(x_max / cell_size)
-        cell_y_max = int(y_max / cell_size)
-
-        # Check if cell indices are within grid dimensions
-        cell_x_min = max(cell_x_min, 0)
-        cell_y_min = max(cell_y_min, 0)
-        cell_x_max = min(cell_x_max, num_cells_x - 1)
-        cell_y_max = min(cell_y_max, num_cells_y - 1)
-
-        # Increment cell count for bounding box presence
-        grid[cell_y_min:cell_y_max + 1, cell_x_min:cell_x_max + 1] += 1
-
-    # Perform clustering on grid using connected components
-    crowded_regions, num_clusters = ndimage.label(grid > 0)
-
-    # Calculate density for each cluster
-    # Cluster density = avg no. people per cell within cluster (no. people in cluster / no. cells in cluster)
-    cluster_densities = []
-    for cluster_label in range(1, num_clusters + 1):
-        cluster_mask = crowded_regions == cluster_label
-        cluster_densities.append(np.sum(grid[cluster_mask]) / np.sum(cluster_mask) if np.sum(cluster_mask) > 0 else 0)
-
-    # Print individual cluster densities
-    for cluster_label, cluster_density in enumerate(cluster_densities):
-        print(f"Cluster {cluster_label + 1} Density: {cluster_density}")
-    
-    # Find densest cluster
-    density = np.max(cluster_densities)
-
-    # Assign density label based on threshold values
-    if density < 2:
-        label = '0'  # Low Density
-    elif density >= 3:
-        label = '2'  # High Density
-    else:
-        label = '1'  # Medium Density
-
-    print(f"Density: {density}")
-    print(f"Label: {label}\n")
-    '''
-    # Generate a color map for the clusters
-    cluster_colors = plt.cm.get_cmap('rainbow', num_clusters + 1)
-    
-    # Plot map with clusters on the grid
-    plt.figure(figsize=(8, 6))
-    
-    # Plot each cluster with a different color
-    for cluster_label in range(1, num_clusters + 1):
-        cluster_mask = crowded_regions == cluster_label
-        plt.scatter(
-            np.nonzero(cluster_mask)[1] * cell_size + cell_size / 2,
-            np.nonzero(cluster_mask)[0] * cell_size + cell_size / 2,
-            color=cluster_colors(cluster_label),
-            marker='o',
-            edgecolors='black',
-            s=50,
-        )
-    
-    plt.colorbar(label='Density')
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title('BB Density Map with Clusters')
-    plt.show()
-    '''
-    return label
-
-
-def grid_density_metres(bbs, img_w, img_h):
-    # Cell size = 1m^2, average height = 168.5cm
-    
-    # Get average person height
-    avg_bb_height = calculate_avg_bb_height(bbs)
-    print(avg_bb_height)
-
-    # Calculate 1m with respect to image
-    metre = (avg_bb_height / 168.5) * 100
-    
-    # Make cell size = 1m^2
-    num_cells_x = int(img_w / metre)
-    num_cells_y = int(img_h / metre)
-
-    # Create grid using cell size and no.
-    grid = np.zeros((num_cells_y, num_cells_x))
-    print(grid.shape)
-
-    # Count no. bbs in each cell
-    for bb in bbs:
-        x_min, y_min, x_max, y_max = bb
-        cell_x_min = int(x_min / metre)
-        cell_y_min = int(y_min / metre)
-        cell_x_max = int(x_max / metre)
-        cell_y_max = int(y_max / metre)
-
-        # Check if cell indices are within grid dimensions
-        cell_x_min = max(cell_x_min, 0)
-        cell_y_min = max(cell_y_min, 0)
-        cell_x_max = min(cell_x_max, num_cells_x - 1)
-        cell_y_max = min(cell_y_max, num_cells_y - 1)
-
-        # Increment cell count for bounding box presence
-        grid[cell_y_min:cell_y_max+1, cell_x_min:cell_x_max+1] += 1
-
-    # Perform clustering on grid using connected components
-    crowded_regions, num_clusters = ndimage.label(grid > 0)
-
-    # Calculate density for each cluster
-    # Cluster density = avg no. people per cell within cluster
-    cluster_densities = []
-    for cluster_label in range(1, num_clusters + 1):
-        cluster_mask = crowded_regions == cluster_label
-        cluster_density = np.sum(grid[cluster_mask]) / np.sum(cluster_mask)
-        cluster_densities.append(cluster_density)
-        print(np.sum(grid[cluster_mask]), '/', np.sum(cluster_mask))
-
-    # Print individual cluster densities
-    for cluster_label, cluster_density in enumerate(cluster_densities):
-        print(f"Cluster {cluster_label + 1} Density: {cluster_density}\n")
-    
-    '''
-    # Generate a color map for the clusters
-    cluster_colors = plt.cm.get_cmap('rainbow', num_clusters + 1)
-    
-    # Plot map with clusters on the grid
-    plt.figure(figsize=(8, 6))
-    
-    # Plot each cluster with a different color
-    for cluster_label in range(1, num_clusters + 1):
-        cluster_mask = crowded_regions == cluster_label
-        plt.scatter(
-            np.nonzero(cluster_mask)[1] * metre + metre / 2,
-            np.nonzero(cluster_mask)[0] * metre + metre / 2,
-            color=cluster_colors(cluster_label),
-            marker='o',
-            edgecolors='black',
-            s=50,
-        )
-    
-    plt.colorbar(label='Density')
-    plt.xlabel('X')
-    plt.ylabel('Y')
-    plt.title('BB Density Map with Clusters')
-    plt.show()
-    '''
-
-    return 0
-
-#----------------------------------------------------------------------------
-
-def generate_ch_labels(source):
-    # Read CrowdHuman annotations
-    with open(os.path.join(source, 'annotations.odgt'), 'r') as file:
-        annotations = file.readlines()
-    
-    labels = {}
-    labels['labels'] = []
-    
-    # Calculate density using euclidean distance of bb centroids
-    for annotation in annotations:
-        # Get image height and width
-        img_name = json.loads(annotation)['ID'] + '.jpg'
-        img = Image.open(os.path.join(source, img_name))
-        img_w, img_h = img.size
-
-        # Extract bbs from image annotation
-        bbs = get_bbs(annotation)
-
-        # Calculate centroids from bbs
-        centroids = get_centroids(bbs)
-
-        # Calculate density
-        density_label = grid_density(bbs, img_w, img_h)
-
-        labels['labels'].append([img_name, density_label])
-
-
-    # Calculate density manually
-    # INACCURATE
-    """for annotation in annotations:
-        #img_name = annotation.split('"', 4)[3] + '.jpg'
-        ann_dict = json.loads(annotation)
-        person_count = annotation.count('person')
-
-        if person_count <= 10:
-            density = 0
-        elif person_count > 10 and person_count <= 30:
-            density = 1
-        else:
-            density = 2
-
-        labels['labels'].append([ann_dict['ID'] + '.jpg', density])"""
-
-    # Calculate density by normalising person_counts
-    # DOESN'T WORK (MAX >300, AVERAGE < 100)
-    """for count in person_counts:
-        density = (person_counts[count] - min(person_counts)) / (max(person_counts) - min(person_counts))
-
-        if density < 0.33:
-            density = 0
-        elif density >= 0.33 and density < 0.66:
-            density = 1
-        else:
-            density = 2
-
-        labels['labels'].append([img_names[count], density])"""
-    
-    # Create dataset.json file in source using dictionary
-    with open(os.path.join(source, 'dataset.json'), 'w') as file:
-        json.dump(labels, file)
-
-#----------------------------------------------------------------------------
-
 def open_image_folder(source_dir, *, max_images: Optional[int]):
     input_images = [str(f) for f in sorted(Path(source_dir).rglob('*')) if is_image_ext(f) and os.path.isfile(f)]
     
@@ -682,6 +326,401 @@ def open_dest(dest: str) -> Tuple[str, Callable[[str, Union[bytes, str]], None],
 
 #----------------------------------------------------------------------------
 
+
+###-------------- CALCULATION OF DENSITY IN CROWD IMAGES -----------------###
+# The following functions are included for the calculation of density in
+# crowd images labelled with bounding boxes (bbs), a requirement of the MSc
+# research project 'Generative Models for the Synthesis and Manipulation of
+# Crowded Scenes' by Philip Lord for the University of Lincoln.
+
+def get_bbs(annotation):
+    ''' Return a list of bbs from a CrowdHuman dataset annotations.odgt file. '''
+
+    bbs = []
+
+    # Extract bounding boxes from annotation file line
+    ann_json = json.loads(annotation)
+
+    for gtbox in ann_json['gtboxes']:
+        # Get full bb [x, y, w, h] (includes non-visible parts of people)
+        xywh = gtbox['fbox']
+        
+        # Calculate bb [x, y, x, y]
+        xyxy = xywh
+        xyxy[2] = xywh[0] + xywh[2] # botton right x
+        xyxy[3] = xywh[1] + xywh[3] # bottom right y
+        
+        bbs.append(xyxy)
+
+    return bbs
+
+
+def get_centroids(bbs):
+    ''' Return a list of centroids from a list of bbs (xyxy format). '''
+
+    centroids = []
+
+    for bb in bbs:
+        centroids.append(((int(bb[2])+int(bb[0]))//2,(int(bb[3])+int(bb[1]))//2))
+
+    return centroids
+
+
+def calculate_avg_bb_size(bbs, img_w, img_h):
+    ''' Return the average bb area relative to image size and in pixels. '''
+
+    # Sum the area of each bb
+    total_bb_area = 0
+    for bb in bbs:
+        x_min, y_min, x_max, y_max = bb
+        bb_width = x_max - x_min
+        bb_height = y_max - y_min
+        total_bb_area += bb_width * bb_height
+
+    # Calculate average bb area
+    total_image_area = img_w * img_h
+    avg_bb_area = total_bb_area / len(bbs)
+    avg_bb_size = np.sqrt(avg_bb_area / total_image_area)
+
+    return avg_bb_size, avg_bb_area
+
+
+def calculate_avg_bb_dimensions(bbs):
+    ''' Return the average bb width and height in pixels. '''
+
+    total_width = 0
+    total_height = 0
+
+    # Sum the height of each bb
+    for bb in bbs:
+        x_min, y_min, x_max, y_max = bb
+
+        bb_width = x_max - x_min
+        total_width += bb_width
+
+        bb_height = y_max - y_min
+        total_height += bb_height
+
+    # Calculate average bb width and height
+    avg_bb_width = total_width / len(bbs)
+    avg_bb_height = total_height / len(bbs)
+
+    return avg_bb_width, avg_bb_height
+
+
+def threshold_density(person_count):
+    ''' Return the density label using manual thresholding based on person count. '''
+
+    # Establish label based on sparse, medium, and dense thresholds
+    if person_count <= 10:
+        label = 0
+    elif person_count > 10 and person_count <= 30:
+        label = 1
+    else:
+        label = 2
+
+    return label
+
+
+def normalised_density(count, person_counts):
+    ''' Return the density label by normalising person counts and thresholding in thirds. '''
+
+    # Calculate density as a normalised value 
+    density = (count - min(person_counts)) / (max(person_counts) - min(person_counts))
+
+    # Thresholding
+    if density < 0.333:
+        label = 0
+    elif density > 0.666:
+        label = 2
+    else:
+        label = 1
+
+    return label
+
+
+def euclidean_density(bbs):
+    ''' Return the density of bbs in a crowd image using euclidean distance. '''
+
+    # https://github.com/ChargedMonk/Social-Distancing-using-YOLOv5/blob/b4694503d490797592f50a52aa7a7f7448c6bf58/utils/utils.py#L929
+    # Calculate distances between every combination of 2 people
+    bb_combos = list(itertools.combinations(bbs,2))
+    distances = []
+
+    for combo in bb_combos:
+        # Calculate centroids
+        bb1, bb2 = combo[0], combo[1]
+        centroid1 = ((int(bb1[2])+int(bb1[0]))//2,(int(bb1[3])+int(bb1[1]))//2)
+        centroid2 = ((int(bb2[2])+int(bb2[0]))//2,(int(bb2[3])+int(bb2[1]))//2)
+
+        # Calculate distance between centroids
+        distance = ((centroid2[0]-centroid1[0])**2 + (centroid2[1]-centroid1[1])**2)**0.5
+        distances.append(distance)
+
+    # Calculate average distance
+    avg_distance = np.mean(distances)
+
+    # Calculate density using average bb width
+    avg_bb_width, _ = calculate_avg_bb_dimensions(bbs)
+    density = avg_distance / avg_bb_width
+
+    # Assign density label based on threshold values
+    if density < 1.5:
+        label = 0  # Low Density
+    elif density >= 3:
+        label = 2  # High Density
+    else:
+        label = 1  # Medium Density
+
+    print(f"Density: {density}\nLabel: {label}\n")
+
+    return label
+
+
+def grid_density(bbs, img_w, img_h):
+    ''' Return the density of bbs in a crowd image using adaptive cell size grid clustering. '''
+
+    # Calculate average bb size
+    avg_bb_size, _ = calculate_avg_bb_size(bbs, img_w, img_h)
+    
+    # Determine desired cell size based on average bb size (adaptive cell size)
+    desired_num_cells = 25
+    cell_x = img_w / desired_num_cells
+    cell_y = img_h / desired_num_cells
+    cell_size = max(cell_x, cell_y, avg_bb_size * 168.5)
+
+    # Calculate no. cells based on image size
+    num_cells_x = int(img_w / cell_size)
+    num_cells_y = int(img_h / cell_size)
+    
+    # Create grid using cell size and no.
+    grid = np.zeros((num_cells_y, num_cells_x))
+
+    # Count no. bbs in each cell
+    for bb in bbs:
+        x_min, y_min, x_max, y_max = bb
+        cell_x_min = int(x_min / cell_size)
+        cell_y_min = int(y_min / cell_size)
+        cell_x_max = int(x_max / cell_size)
+        cell_y_max = int(y_max / cell_size)
+
+        # Check if cell indices are within grid dimensions
+        cell_x_min = max(cell_x_min, 0)
+        cell_y_min = max(cell_y_min, 0)
+        cell_x_max = min(cell_x_max, num_cells_x - 1)
+        cell_y_max = min(cell_y_max, num_cells_y - 1)
+
+        # Increment cell count for bounding box presence
+        grid[cell_y_min:cell_y_max + 1, cell_x_min:cell_x_max + 1] += 1
+
+    # Perform clustering on grid using connected components
+    crowded_regions, num_clusters = ndimage.label(grid > 0)
+
+    # Calculate density for each cluster
+    # Cluster density = avg no. people per cell within cluster (no. people in cluster / no. cells in cluster)
+    cluster_densities = []
+    for cluster_label in range(1, num_clusters + 1):
+        cluster_mask = crowded_regions == cluster_label
+        cluster_densities.append(np.sum(grid[cluster_mask]) / np.sum(cluster_mask) if np.sum(cluster_mask) > 0 else 0)
+
+    # Print individual cluster densities
+    for cluster_label, cluster_density in enumerate(cluster_densities):
+        print(f"Cluster {cluster_label + 1} Density: {cluster_density}")
+    
+    # Find densest cluster
+    density = np.max(cluster_densities)
+
+    # Assign density label based on threshold values
+    if density < 2:
+        label = 0  # Low Density
+    elif density >= 3:
+        label = 2  # High Density
+    else:
+        label = 1  # Medium Density
+
+    print(f"Density: {density}\nLabel: {label}\n")
+
+    return label
+
+
+def grid_density_metres(bbs, img_w, img_h):
+    ''' Return the density of bbs in a crowd image using 1m^2 cell grid clustering. '''
+        
+    # Get average person height
+    _, avg_bb_height = calculate_avg_bb_dimensions(bbs)
+
+    # Calculate 1m with respect to image using average height of 168.5cm
+    metre = (avg_bb_height / 168.5) * 100
+    
+    # Make cell size = 1m^2
+    num_cells_x = int(img_w / metre)
+    num_cells_y = int(img_h / metre)
+
+    # Create grid using cell size and no.
+    grid = np.zeros((num_cells_y, num_cells_x))
+
+    # Count no. bbs in each cell
+    for bb in bbs:
+        x_min, y_min, x_max, y_max = bb
+        cell_x_min = int(x_min / metre)
+        cell_y_min = int(y_min / metre)
+        cell_x_max = int(x_max / metre)
+        cell_y_max = int(y_max / metre)
+
+        # Check if cell indices are within grid dimensions
+        cell_x_min = max(cell_x_min, 0)
+        cell_y_min = max(cell_y_min, 0)
+        cell_x_max = min(cell_x_max, num_cells_x - 1)
+        cell_y_max = min(cell_y_max, num_cells_y - 1)
+
+        # Increment cell count for bounding box presence
+        grid[cell_y_min:cell_y_max+1, cell_x_min:cell_x_max+1] += 1
+
+    # Perform clustering on grid using connected components
+    crowded_regions, num_clusters = ndimage.label(grid > 0)
+
+    # Calculate density for each cluster
+    # Cluster density = avg no. people per cell within cluster
+    cluster_densities = []
+    for cluster_label in range(1, num_clusters + 1):
+        cluster_mask = crowded_regions == cluster_label
+        cluster_density = np.sum(grid[cluster_mask]) / np.sum(cluster_mask)
+        cluster_densities.append(cluster_density)
+
+    # Print individual cluster densities
+    for cluster_label, cluster_density in enumerate(cluster_densities):
+        print(f"Cluster {cluster_label + 1} Density: {cluster_density}")
+
+    # Find densest cluster
+    density = np.max(cluster_densities)
+
+    # Assign density label based on threshold values
+    if density < 2:
+        label = 0  # Low Density
+    elif density >= 3:
+        label = 2  # High Density
+    else:
+        label = 1  # Medium Density
+
+    print(f"Density: {density}\nLabel: {label}\n")
+
+    return label
+
+
+def kde_density(bbs, img_w, img_h):
+    ''' Return the density of bbs in a crowd image using KDE clustering. '''
+
+    # Set bandwidth and step size for kernel
+    bandwidth = 0.5
+    step_size = 1
+
+    # Convert centroids to np array
+    centroids = np.array(get_centroids(bbs))
+
+    # Create KDE instance
+    kde = KernelDensity(bandwidth=bandwidth, kernel='gaussian')
+
+    # Fit KDE model to data
+    kde.fit(centroids)
+
+    # Generate grid of points covering entire image to evaluate density
+    x, y = np.meshgrid(np.arange(0, img_w, step_size),
+                       np.arange(0, img_h, step_size))
+    xy = np.vstack([x.ravel(), y.ravel()]).T
+
+    # Calculate density values for the grid points
+    density_values = np.exp(kde.score_samples(xy))
+
+    # Reshape density values to match shape of grid
+    density_map = density_values.reshape(x.shape)
+
+    plt.figure(figsize=(8, 6))
+    plt.imshow(density_map, cmap='hot', origin='lower')
+    plt.colorbar(label='Density')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.title('Density Map')
+    plt.show()
+
+    # Perform clustering on grid using connected components
+    crowded_regions, num_clusters = ndimage.label(density_map > 0)
+
+    # Calculate density for each cluster
+    # Cluster density = avg no. people per cell within cluster (no. people in cluster / no. cells in cluster)
+    cluster_densities = []
+    for cluster_label in range(1, num_clusters + 1):
+        cluster_mask = crowded_regions == cluster_label
+        cluster_density = np.sum(density_map[cluster_mask]) / np.sum(cluster_mask)
+        cluster_densities.append(cluster_density)
+
+    # Print individual cluster densities
+    for cluster_label, cluster_density in enumerate(cluster_densities):
+        print(f"Cluster {cluster_label + 1} Density: {cluster_density}")
+    
+    # Find densest cluster
+    density = np.max(cluster_densities)
+
+    # Assign density label based on threshold values
+    if density < 2:
+        label = 0  # Low Density
+    elif density >= 3:
+        label = 2  # High Density
+    else:
+        label = 1  # Medium Density
+
+    print(f"Density: {density}\nLabel: {label}\n")
+
+    return label
+
+
+def generate_ch_labels(source, method):
+    ''' Create a dataset.json file in source with crowd density labels using CrowdHuman annotations.odgt. '''
+
+    # Read CrowdHuman annotations
+    with open(os.path.join(source, 'annotations.odgt'), 'r') as file:
+        annotations = file.readlines()
+    
+    # Declare labels['labels'] dictionary for dataset.json file
+    labels = {}
+    labels['labels'] = []
+
+    # Get person count of each image for normalised method
+    if method == 'normalised':
+        person_counts = [annotation.count('person') for annotation in annotations]
+    
+    # Calculate density of each image and generate label
+    for annotation in annotations:
+        # Get image name, height, and width
+        img_name = json.loads(annotation)['ID'] + '.jpg'
+        img = Image.open(os.path.join(source, img_name))
+        img_w, img_h = img.size
+
+        # Extract bbs from image annotation
+        bbs = get_bbs(annotation)
+
+        # Calculate density using selected method
+        if method == 'threshold':
+            density_label = threshold_density(len(bbs))
+        elif method == 'normalised':
+            density_label = normalised_density(len(bbs), person_counts)
+        elif method == 'euclidean':
+            density_label = euclidean_density(bbs)
+        elif method == 'grid':
+            density_label = grid_density(bbs, img_w, img_h)
+        elif method == 'grid-metres':
+            density_label = grid_density_metres(bbs, img_w, img_h)
+        elif method == 'kde':
+            density_label = kde_density(bbs, img_w, img_h)
+
+        # Append label to dictionary
+        labels['labels'].append([img_name, density_label])
+    
+    # Create dataset.json file in source using label dictionary
+    with open(os.path.join(source, 'dataset.json'), 'w') as file:
+        json.dump(labels, file)
+
+#----------------------------------------------------------------------------
+
 @click.command()
 @click.pass_context
 @click.option('--source', help='Directory or archive name for input dataset', required=True, metavar='PATH')
@@ -689,8 +728,7 @@ def open_dest(dest: str) -> Tuple[str, Callable[[str, Union[bytes, str]], None],
 @click.option('--max-images', help='Output only up to `max-images` images', type=int, default=None)
 @click.option('--transform', help='Input crop/resize mode', type=click.Choice(['center-crop', 'center-crop-wide']))
 @click.option('--resolution', help='Output resolution (e.g., \'512x512\')', metavar='WxH', type=parse_tuple)
-@click.option('--bbcount', help='Include bounding box label file', type=str)
-@click.option('--is-ch', help='Prepare dataset.json for CrowdHuman dataset', type=bool)
+@click.option('--density', help='Prepare dataset.json for CrowdHuman dataset', type=click.Choice(['threshold', 'normalised', 'euclidean', 'grid', 'grid-metres', 'kde']))
 def convert_dataset(
     ctx: click.Context,
     source: str,
@@ -698,8 +736,7 @@ def convert_dataset(
     max_images: Optional[int],
     transform: Optional[str],
     resolution: Optional[Tuple[int, int]],
-    bbcount: Optional[str],
-    is_ch: Optional[bool]
+    density: Optional[str]
 ):
     """Convert an image dataset into a dataset archive usable with StyleGAN2 ADA PyTorch.
 
@@ -741,6 +778,10 @@ def convert_dataset(
     If the 'dataset.json' file cannot be found, the dataset is interpreted as
     not containing class labels.
 
+    To prepare the 'dataset.json' file with crowd densities calculated from a CrowdHuman
+    'annotations.odgt' file, use the --density option and specify the method used to
+    calculate crowd density.
+
     Image scale/crop and resolution requirements:
 
     Output images must be square-shaped and they must all have the same power-of-two
@@ -766,8 +807,8 @@ def convert_dataset(
         ctx.fail('--dest output filename or directory must not be an empty string')
 
     # Create dataset.json labels file if dataset is CrowdHuman
-    if is_ch is not None:
-        generate_ch_labels(source)
+    if density is not None:
+        generate_ch_labels(source, density)
         
     num_files, input_iter = open_dataset(source, max_images=max_images)
     archive_root_dir, save_bytes, close_dest = open_dest(dest)
@@ -777,19 +818,10 @@ def convert_dataset(
 
     dataset_attrs = None
 
-    # Get bb labels from annotated dataset
-    if bbcount is not None:
-        with open(bbcount, 'r') as file:
-            bb_labels = file.read()
-
     labels = []
     for idx, image in tqdm(enumerate(input_iter), total=num_files):
         idx_str = f'{idx:08d}'
         archive_fname = f'{idx_str[:5]}/img{idx_str}.png'
-
-        # Replace filename in dataset annotation file with prepared dataset name (e.g. 'img00000006')
-        if bbcount is not None:
-            bb_labels = bb_labels.replace(image['filename'][image['filename'].rfind('\\') + 1:-4], f'img{idx_str}')
 
         # Apply crop and resize.
         img = transform_image(image['img'])
@@ -832,12 +864,6 @@ def convert_dataset(
     }
     save_bytes(os.path.join(archive_root_dir, 'dataset.json'), json.dumps(metadata))
     close_dest()
-
-    # Write bb annotations to text file in prepared dataset folder
-    if bbcount is not None:
-        z = zipfile.ZipFile(dest, "a")
-        z.writestr('bb_annotations.txt', bb_labels)
-        z.close()
 
 #----------------------------------------------------------------------------
 
