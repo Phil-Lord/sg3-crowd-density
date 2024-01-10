@@ -25,13 +25,11 @@ The following requirements are taken from the [official PyTorch StyleGAN3 reposi
 
 >See [Troubleshooting](./docs/troubleshooting.md) for help on common installation and run-time problems.
 
-
-## Getting started
-- Clone or download repo
-- Download CrowdHuman (link)
-- Switch to environment from file
+The crowd density estimation methods in [`dataset_tool.py`](dataset_tool.py) are designed to be used with the CrowdHuman crowd image dataset. Head over to the [CrowdHuman download page](https://www.crowdhuman.org/download.html) and use the Google Drive links to download the training and/or validation zip file(s) and odgt annotation file(s).
 
 ## Generating crowd density labels
+Once the repository is cloned locally, the Python environment is activated, and the CrowdHuman data is downloaded, you are ready to start generating crowd density labels.
+
 - Explain command
 - List methods
 - Command examples
