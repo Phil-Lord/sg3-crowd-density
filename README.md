@@ -58,4 +58,4 @@ python train.py \
 ```
 
 ## Graphing loss
-Generate loss graphs of training runs using the script.
+During training, the `--outdir` folder populates a file called `X.jsonl` containing various pieces of data from the run. The `graph_loss.py` script can be used to graph the loss of a run using by pointing to the `X.jsonl` file using the `folder_path` variable. This script even allows for plotting loss from multiple runs on one graph, such as when performing transfer learning. To do this, simply make sure all `X.jsonl` files are in the `folder_path` target folder and use the `lines_to_skip` variable to smooth spikes between files.
