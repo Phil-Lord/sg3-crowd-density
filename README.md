@@ -47,7 +47,15 @@ python dataset_tool.py \
 ```
 
 ## Conditional training with labelled datasets
-Run command for training with labels option.
+Once the labelled dataset has been generated, its time to perform conditional StyleGAN3 training. No adjustments have been made to this part of the process, just point to a labelled CrowdHuman dataset with `--data`, select how many epochs with `--kimg` (currently 2,000), and use the other options in the example below.
+
+```
+python train.py \
+        --outdir=C:\path\to\training-runs --cfg=stylegan3-r \
+        --data=C:\path\to\crowdhuman_labelled.zip \
+        --gpus=1 --batch=32 --batch-gpu=8 --gamma=2 \
+        --kimg=2000 --snap=10 --cbase=16384 --cond=true
+```
 
 ## Graphing loss
 Generate loss graphs of training runs using the script.
