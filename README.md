@@ -28,11 +28,23 @@ The following requirements are taken from the [official PyTorch StyleGAN3 reposi
 The crowd density estimation methods in [`dataset_tool.py`](dataset_tool.py) are designed to be used with the CrowdHuman crowd image dataset. Head over to the [CrowdHuman download page](https://www.crowdhuman.org/download.html) and use the Google Drive links to download the training and/or validation zip file(s) and odgt annotation file(s).
 
 ## Generating crowd density labels
-Once the repository is cloned locally, the Python environment is activated, and the CrowdHuman data is downloaded, you are ready to start generating crowd density labels.
+Once the repository is cloned locally, the Python environment is activated, and the CrowdHuman data is downloaded, you are ready to start generating crowd density labels. This is done using the `dataset_tool.py` with the `--source` option set to the locally stored CrowdHuman zip folder, containing both the images and the annotations file. Use the new `--density` option to select a crowd density estimation method; available methods include:
 
-- Explain command
-- List methods
-- Command examples
+- `threshold`: Manual Thresholds with Crowd Counting.
+- `normalised`: Manual Thresholds with Normalised Crowd Counting.
+- `euclidean`: Euclidean Distance.
+- `grid`: Grid Density Clustering with Adaptive Cell Sizing.
+- `grid-metres`: Grid Density Clustering with m<sup>2</sup> Cell Sizing.
+- `kde`: Kernel Density Estimation (KDE) (incomplete)
+
+The example below shows `dataset_tool.py` being used to label a CrowdHuman dataset using the Euclidean Distance method:
+
+```
+python dataset_tool.py \
+    --source="C:\path\to\crowdhuman\dataset.zip" \
+    --dest="C:\path\to\output\destination.zip" \
+    --resolution=256x256 --transform=center-crop --density=grid
+```
 
 ## Conditional training with labelled datasets
 Run command for training with labels option.
