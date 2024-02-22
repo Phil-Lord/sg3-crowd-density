@@ -28,7 +28,7 @@ The following requirements are taken from the [official PyTorch StyleGAN3 reposi
 The crowd density estimation methods in [`dataset_tool.py`](dataset_tool.py) are designed to be used with the CrowdHuman crowd image dataset. Head over to the [CrowdHuman download page](https://www.crowdhuman.org/download.html) and use the Google Drive links to download the training and/or validation zip file(s) and odgt annotation file(s).
 
 ## Generating crowd density labels
-Once the repository is cloned locally, the Python environment is activated, and the CrowdHuman data is downloaded, you are ready to start generating crowd density labels. This is done using the `dataset_tool.py` with the `--source` option set to the locally stored CrowdHuman zip folder, containing both the images and the annotations file. Use the new `--density` option to select a crowd density estimation method; available methods include:
+Once the repository is cloned locally, the Python environment is activated, and the CrowdHuman data is downloaded, you are ready to start generating crowd density labels. This is done using the [`dataset_tool.py`](dataset_tool.py) with the `--source` option set to the locally stored CrowdHuman zip folder, containing both the images and the annotations file. Use the new `--density` option to select a crowd density estimation method; available methods include:
 
 - `threshold`: Manual Thresholds with Crowd Counting.
 - `normalised`: Manual Thresholds with Normalised Crowd Counting.
@@ -37,7 +37,7 @@ Once the repository is cloned locally, the Python environment is activated, and 
 - `grid-metres`: Grid Density Clustering with m<sup>2</sup> Cell Sizing.
 - `kde`: Kernel Density Estimation (KDE) (incomplete)
 
-The example below shows `dataset_tool.py` being used to label a CrowdHuman dataset using the Euclidean Distance method:
+The example below shows [`dataset_tool.py`](dataset_tool.py) being used to label a CrowdHuman dataset using the Euclidean Distance method:
 
 ```
 python dataset_tool.py \
@@ -58,4 +58,4 @@ python train.py \
 ```
 
 ## Graphing loss
-During training, the `--outdir` folder populates a file called `stats.jsonl` containing various pieces of data from the run. The `graph_loss.py` script can be used to graph the loss of a run using by pointing to the `stats.jsonl` file using the `folder_path` variable. This script even allows for plotting loss from multiple runs on one graph, such as when performing transfer learning. To do this, simply make sure all `stats.jsonl` files are in the `folder_path` target folder and use the `lines_to_skip` variable to smooth spikes between files.
+During training, the `--outdir` folder populates a file called `stats.jsonl` containing various pieces of data from the run. The [`graph_loss.py`](graph_loss.py) script can be used to graph the loss of a run using by pointing to the `stats.jsonl` file using the `folder_path` variable. This script even allows for plotting loss from multiple runs on one graph, such as when performing transfer learning. To do this, simply make sure all `stats.jsonl` files are in the `folder_path` target folder and use the `lines_to_skip` variable to smooth spikes between files.
